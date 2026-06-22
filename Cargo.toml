@@ -1,4 +1,4 @@
 [workspace]
 resolver = "3"
-members = ["suv-cli","suv-core"]
+members = ["suv","suv-core"]
 
