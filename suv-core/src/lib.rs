@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 pub use sysinfo::{Disk, Disks};
 use walkdir::WalkDir;
 
@@ -7,28 +10,55 @@ pub fn get_mount_point_disk<'a>(disks: &'a Disks, mount_point: Option<&Path>) ->
     disks.iter().find(|disk| disk.mount_point() == mount_point)
 }
 
-pub fn get_directories_sizes(root: Option<&str>) -> Vec<(PathBuf, u64)> {
+// pub fn get_directories_sizes(root: Option<&str>) -> Vec<(PathBuf, u64)> {
+pub fn get_directories_sizes(root: Option<&str>) -> Vec<(String, u64)> {
     let root = root.unwrap_or("/");
-    let mut directories_sizes: Vec<(PathBuf, u64)> = Vec::new();
+    // let mut directories_sizes: Vec<(PathBuf, u64)> = Vec::new();
+    let mut directories_sizes: HashMap<String, u64> = HashMap::new();
 
-    for entry in WalkDir::new(root).max_depth(1) {
-        if let Ok(x) = entry {
-            if let Ok(metadata) = x.metadata() {
-                if metadata.is_dir() {
-                    let total_size_dir: u64 = WalkDir::new(x.path())
-                        .into_iter()
-                        .filter_map(|x| x.ok())
-                        .filter_map(|x| x.metadata().ok())
-                        .map(|x| x.len())
-                        .sum();
+    let entries = WalkDir::new(root)
+        .same_file_system(true)
+        .into_iter()
+        .filter_map(|x| x.ok());
 
-                    directories_sizes.push((x.path().to_path_buf(), total_size_dir));
-                } else if metadata.is_symlink() {
-                    break;
-                }
+    for entry in entries {
+        let path = entry.path();
+
+        if let Ok(metadata) = entry.metadata() {
+            if let Some(tld) = get_top_level_directory(path.to_path_buf()) {
+                directories_sizes
+                    .entry(tld)
+                    .and_modify(|x| *x += metadata.len())
+                    .or_insert(0);
             }
         }
     }
+    directories_sizes.into_iter().collect()
+}
 
-    directories_sizes
+fn get_top_level_directory(path: PathBuf) -> Option<String> {
+    let (prefix, _) = path.to_str()?.split_once('/')?;
+    Some(prefix.to_owned())
+}
+
+pub fn get_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for entry in WalkDir::new("/").into_iter().filter_map(|e| e.ok()) {
+        paths.push(entry.into_path());
+    }
+    paths
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn get_top_directories() {
+        let n_top_directories = 5;
+        let mut directories = get_directories_sizes(Some("/"));
+        directories.sort_by_key(|&(_, size)| size);
+        let top_directories: Vec<_> = directories.iter().rev().take(n_top_directories).collect();
+        println!("Top directories:\n{top_directories:?}");
+    }
 }
