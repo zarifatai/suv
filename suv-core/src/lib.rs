@@ -30,10 +30,11 @@ pub fn get_directories_sizes(root_path: PathBuf) -> HashMap<PathBuf, u64> {
             }
 
             if let Some(tld) = get_top_level_directory(entry.path(), &root_path) {
+                let size = metadata.blocks() * 512;
                 directories_sizes
                     .entry(tld)
-                    .and_modify(|x| *x += metadata.blocks() * 512)
-                    .or_insert(metadata.blocks() * 512);
+                    .and_modify(|x| *x += size)
+                    .or_insert(size);
             }
         }
     }
