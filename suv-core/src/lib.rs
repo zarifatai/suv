@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::os::unix::fs::MetadataExt;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -10,43 +12,38 @@ pub fn get_mount_point_disk<'a>(disks: &'a Disks, mount_point: Option<&Path>) ->
     disks.iter().find(|disk| disk.mount_point() == mount_point)
 }
 
-// pub fn get_directories_sizes(root: Option<&str>) -> Vec<(PathBuf, u64)> {
-pub fn get_directories_sizes(root: Option<&str>) -> Vec<(String, u64)> {
-    let root = root.unwrap_or("/");
-    // let mut directories_sizes: Vec<(PathBuf, u64)> = Vec::new();
-    let mut directories_sizes: HashMap<String, u64> = HashMap::new();
-
-    let entries = WalkDir::new(root)
+pub fn get_directories_sizes(root_path: PathBuf) -> HashMap<PathBuf, u64> {
+    let entries = WalkDir::new(&root_path)
         .same_file_system(true)
         .into_iter()
         .filter_map(|x| x.ok());
 
+    let mut directories_sizes: HashMap<PathBuf, u64> = HashMap::new();
+    let mut seen_inodes: HashSet<(u64, u64)> = HashSet::new();
     for entry in entries {
-        let path = entry.path();
-
         if let Ok(metadata) = entry.metadata() {
-            if let Some(tld) = get_top_level_directory(path.to_path_buf()) {
+            if metadata.nlink() > 1 {
+                let inode_key = (metadata.dev(), metadata.ino());
+                if !seen_inodes.insert(inode_key) {
+                    continue;
+                }
+            }
+
+            if let Some(tld) = get_top_level_directory(entry.path(), &root_path) {
                 directories_sizes
                     .entry(tld)
-                    .and_modify(|x| *x += metadata.len())
-                    .or_insert(0);
+                    .and_modify(|x| *x += metadata.blocks() * 512)
+                    .or_insert(metadata.blocks() * 512);
             }
         }
     }
-    directories_sizes.into_iter().collect()
+    directories_sizes
 }
 
-fn get_top_level_directory(path: PathBuf) -> Option<String> {
-    let (prefix, _) = path.to_str()?.split_once('/')?;
-    Some(prefix.to_owned())
-}
-
-pub fn get_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for entry in WalkDir::new("/").into_iter().filter_map(|e| e.ok()) {
-        paths.push(entry.into_path());
-    }
-    paths
+fn get_top_level_directory<'a>(path: &Path, root_path: &PathBuf) -> Option<PathBuf> {
+    let remaining_path = path.strip_prefix(root_path).ok()?;
+    let tld = remaining_path.components().next()?;
+    Some(PathBuf::new().join(tld))
 }
 
 #[cfg(test)]
@@ -56,9 +53,14 @@ mod test {
     #[test]
     fn get_top_directories() {
         let n_top_directories = 5;
-        let mut directories = get_directories_sizes(Some("/"));
+        let root_path = PathBuf::from("/");
+        let directories = get_directories_sizes(root_path);
+        let mut directories: Vec<(PathBuf, u64)> = directories.into_iter().collect();
         directories.sort_by_key(|&(_, size)| size);
         let top_directories: Vec<_> = directories.iter().rev().take(n_top_directories).collect();
         println!("Top directories:\n{top_directories:?}");
+
+        let total_size: u64 = directories.iter().map(|(_, s)| *s).sum();
+        println!("Total size: {total_size}");
     }
 }
